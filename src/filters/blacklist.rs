@@ -5,29 +5,51 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 #[derive(Deserialize, Default)]
-pub struct Blacklist {
+pub struct BlacklistConfig {
     pub pubkeys: Option<Vec<String>>,
     pub ips: Option<Vec<String>>,
     pub cidrs: Option<Vec<String>>,
 }
 
+#[derive(Default)]
+pub struct Blacklist {
+    pubkeys: Option<Vec<String>>,
+    ips: Option<Vec<String>>,
+    cidrs: Option<Vec<IpNetwork>>,
+}
+
+impl<'de> Deserialize<'de> for Blacklist {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let config = BlacklistConfig::deserialize(deserializer)?;
+        Ok(Blacklist {
+            pubkeys: config.pubkeys,
+            ips: config.ips,
+            cidrs: config.cidrs.map(|cidrs| {
+                cidrs
+                    .into_iter()
+                    .filter_map(|s| IpNetwork::from_str(&s).ok())
+                    .collect()
+            }),
+        })
+    }
+}
+
 impl Blacklist {
     fn is_ip_blocked(&self, ip: &str) -> bool {
-        if let Some(cidrs) = &self.cidrs {
-            for cidr in cidrs {
-                if let Ok(network) = IpNetwork::from_str(cidr) {
-                    if let Ok(addr) = IpAddr::from_str(ip) {
-                        if network.contains(addr) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
         if let Some(ips) = &self.ips {
             if ips.contains(&ip.to_string()) {
                 return true;
+            }
+        }
+
+        if let Ok(addr) = IpAddr::from_str(ip) {
+            if let Some(cidrs) = &self.cidrs {
+                if cidrs.iter().any(|network| network.contains(addr)) {
+                    return true;
+                }
             }
         }
 
